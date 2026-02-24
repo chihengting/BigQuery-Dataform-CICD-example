@@ -1,0 +1,10 @@
+config {
+  type: "table",
+  name: "github_action_test",
+  description: "用來驗證 GitHub Actions 自動執行 Dataform 的測試表"
+}
+
+SELECT
+  CURRENT_TIMESTAMP() as execution_time,
+  "Success_20260224" as status,
+  "jchuang-project" as project_id
