@@ -1,0 +1,75 @@
+name: 自動執行 Dataform SQLX
+
+on:
+  push:
+    branches:
+      - test
+
+env:
+  PROJECT_ID: jchuang-project
+  LOCATION: asia-east1
+  REPOSITORY: ding
+  SERVICE_ACCOUNT_EMAIL: bigquery-pipeline-excutor@jchuang-project.iam.gserviceaccount.com
+
+jobs:
+  run-dataform:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取得程式碼
+        uses: actions/checkout@v3
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: 設定 Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Execute Dataform via REST API
+        run: |
+          echo "0. 驗證現在登入的 GCP 帳號身分："
+          gcloud config get-value account
+          
+          echo "1. 取得 Google Cloud Access Token..."
+          ACCESS_TOKEN=$(gcloud auth print-access-token)
+          
+          echo "2. 呼叫 API：建立 Compilation Result (編譯最新的 test 分支)..."
+          COMPILATION_RESPONSE=$(curl -s -X POST "https://dataform.googleapis.com/v1/projects/${{ env.PROJECT_ID }}/locations/${{ env.LOCATION }}/repositories/${{ env.REPOSITORY }}/compilationResults" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"gitCommitish": "test"}')
+            
+          COMPILATION_RESULT=$(echo $COMPILATION_RESPONSE | jq -r '.name')
+          
+          if [ "$COMPILATION_RESULT" == "null" ] || [ -z "$COMPILATION_RESULT" ]; then
+            echo "❌ 編譯失敗！API 回傳內容："
+            echo $COMPILATION_RESPONSE
+            exit 1
+          fi
+          
+          echo "✅ 編譯成功！Compilation Result ID: $COMPILATION_RESULT"
+          
+          echo "3. 呼叫 API：建立 Workflow Invocation (開始將 SQL 送進 BigQuery 執行)..."
+          
+          # 👇 修改這裡：使用 jq 動態生成帶有 serviceAccount 的 JSON Payload
+          PAYLOAD=$(jq -n \
+            --arg comp "$COMPILATION_RESULT" \
+            --arg sa "${{ env.SERVICE_ACCOUNT_EMAIL }}" \
+            '{compilationResult: $comp, invocationConfig: {serviceAccount: $sa}}')
+
+          # 帶入 PAYLOAD 呼叫 API
+          INVOCATION_RESPONSE=$(curl -s -X POST "https://dataform.googleapis.com/v1/projects/${{ env.PROJECT_ID }}/locations/${{ env.LOCATION }}/repositories/${{ env.REPOSITORY }}/workflowInvocations" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+          
+          INVOCATION_ID=$(echo $INVOCATION_RESPONSE | jq -r '.name')
+          
+          if [ "$INVOCATION_ID" == "null" ] || [ -z "$INVOCATION_ID" ]; then
+            echo "❌ 執行觸發失敗！API 回傳內容："
+            echo $INVOCATION_RESPONSE
+            exit 1
+          fi
+          
+          echo "🚀 Dataform 執行已成功觸發！Invocation ID: $INVOCATION_ID"
