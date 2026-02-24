@@ -1,0 +1,4 @@
+defaultProject: jchuang-project
+defaultAssertionDataset: dataform_assertions
+dataformCoreVersion: 3.0.37
+
