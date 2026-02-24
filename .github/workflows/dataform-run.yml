@@ -3,13 +3,13 @@ name: 自動執行 Dataform SQLX
 on:
   push:
     branches:
-      - test
+      - main
 
 env:
   PROJECT_ID: jchuang-project
   LOCATION: asia-east1
-  REPOSITORY: ding
-  SERVICE_ACCOUNT_EMAIL: bigquery-pipeline-excutor@jchuang-project.iam.gserviceaccount.com
+  REPOSITORY: BigQuery-Dataform-CICD-example
+  SERVICE_ACCOUNT_EMAIL: bigquery-github-action@jchuang-project.iam.gserviceaccount.com
 
 jobs:
   run-dataform:
@@ -34,11 +34,11 @@ jobs:
           echo "1. 取得 Google Cloud Access Token..."
           ACCESS_TOKEN=$(gcloud auth print-access-token)
           
-          echo "2. 呼叫 API：建立 Compilation Result (編譯最新的 test 分支)..."
+          echo "2. 呼叫 API：建立 Compilation Result (編譯最新的 main 分支)..."
           COMPILATION_RESPONSE=$(curl -s -X POST "https://dataform.googleapis.com/v1/projects/${{ env.PROJECT_ID }}/locations/${{ env.LOCATION }}/repositories/${{ env.REPOSITORY }}/compilationResults" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"gitCommitish": "test"}')
+            -d '{"gitCommitish": "main"}')
             
           COMPILATION_RESULT=$(echo $COMPILATION_RESPONSE | jq -r '.name')
           
@@ -52,13 +52,11 @@ jobs:
           
           echo "3. 呼叫 API：建立 Workflow Invocation (開始將 SQL 送進 BigQuery 執行)..."
           
-          # 👇 修改這裡：使用 jq 動態生成帶有 serviceAccount 的 JSON Payload
           PAYLOAD=$(jq -n \
             --arg comp "$COMPILATION_RESULT" \
             --arg sa "${{ env.SERVICE_ACCOUNT_EMAIL }}" \
             '{compilationResult: $comp, invocationConfig: {serviceAccount: $sa}}')
 
-          # 帶入 PAYLOAD 呼叫 API
           INVOCATION_RESPONSE=$(curl -s -X POST "https://dataform.googleapis.com/v1/projects/${{ env.PROJECT_ID }}/locations/${{ env.LOCATION }}/repositories/${{ env.REPOSITORY }}/workflowInvocations" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
@@ -72,4 +70,4 @@ jobs:
             exit 1
           fi
           
-          echo "🚀 Dataform 執行已成功觸發！Invocation ID: $INVOCATION_ID"
+          echo "Dataform 執行已成功觸發！Invocation ID: $INVOCATION_ID"
