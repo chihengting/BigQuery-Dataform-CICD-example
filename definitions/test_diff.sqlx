@@ -6,6 +6,6 @@ config {
 
 SELECT
   CURRENT_TIMESTAMP() as execution_time,
-  "Success_for_diff" as status,
+  "Success_diff" as status,
   "jchuang-project" as project_id,
   "BigQuery-Dataform-CICD-example" as workspaces
