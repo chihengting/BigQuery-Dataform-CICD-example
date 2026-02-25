@@ -1,6 +1,6 @@
 config {
   type: "table",
-  name: "github_diff_test",
+  name: "test_diff",
   description: "用來驗證 GitHub Actions 差異更新功能"
 }
 
