@@ -3,9 +3,9 @@
 
 ## 概述
 
-本文件旨在說明如何透過 GitHub Actions，在程式碼合併或推播至特定分支時，
-自動觸發 GCP Dataform 進行編譯（Compilation）與執行（Invocation），
-將最新的 SQLX 邏輯部署並運行於 BigQuery 中。
+* 本文件旨在說明如何透過 GitHub Actions，在程式碼合併或推播至特定分支時，
+* 自動觸發 GCP Dataform 進行編譯（Compilation）與執行（Invocation），
+* 將最新的 SQLX 邏輯部署並運行於 BigQuery 中。
 
 ---
 
@@ -244,4 +244,5 @@ jobs:
 ### 疑問二：執行成功後，Dataform 網頁介面的程式碼並未同步更新？
 
 * **解答**：Dataform 網頁介面屬工程師的「個人工作區 (Workspace)」，不會透過 CI/CD 自動覆蓋。CI/CD 機制為直接從 GitHub 讀取原始碼進行編譯與執行。
+
 * **驗證方式**：請直接至 BigQuery 檢查資料表內容，或於 GCP Dataform 選擇儲存庫，點擊上方 **「工作流程叫用 (Workflow Invocations)」** 查看實際執行紀錄。
