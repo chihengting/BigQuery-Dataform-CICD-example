@@ -10,64 +10,100 @@ env:
   LOCATION: asia-east1
   REPOSITORY: BigQuery-Dataform-CICD-example
   SERVICE_ACCOUNT_EMAIL: bigquery-github-action@jchuang-project.iam.gserviceaccount.com
+  TARGET_DATASET: ding_test
 
 jobs:
   run-dataform:
     runs-on: ubuntu-latest
     steps:
       - name: 取得程式碼
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 必須設為 0，才能抓取完整的 git 歷史來比對差異
 
-      - name: Authenticate to Google Cloud
+      - name: 偵測有異動的 .sqlx 檔案
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: '**/*.sqlx'
+          separator: ' '
+
+      - name: GCP 權限驗證 (Authenticate to Google Cloud)
+        if: steps.changed-files.outputs.any_changed == 'true'
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: 設定 Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v1
-
-      - name: Execute Dataform via REST API
+      - name: 透過 REST API 執行 Dataform
+        if: steps.changed-files.outputs.any_changed == 'true'
         run: |
-          echo "0. 驗證現在登入的 GCP 帳號身分："
-          gcloud config get-value account
-          
           echo "1. 取得 Google Cloud Access Token..."
           ACCESS_TOKEN=$(gcloud auth print-access-token)
           
-          echo "2. 呼叫 API：建立 Compilation Result (編譯最新的 main 分支)..."
+          echo "2. 呼叫 API：建立 Compilation Result..."
           COMPILATION_RESPONSE=$(curl -s -X POST "https://dataform.googleapis.com/v1/projects/${{ env.PROJECT_ID }}/locations/${{ env.LOCATION }}/repositories/${{ env.REPOSITORY }}/compilationResults" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"gitCommitish": "main"}')
+            -d "{\"gitCommitish\": \"${{ github.sha }}\"}")
             
-          COMPILATION_RESULT=$(echo $COMPILATION_RESPONSE | jq -r '.name')
+          COMPILATION_RESULT=$(echo $COMPILATION_RESPONSE | jq -r '.name // empty')
           
-          if [ "$COMPILATION_RESULT" == "null" ] || [ -z "$COMPILATION_RESULT" ]; then
-            echo "❌ 編譯失敗！API 回傳內容："
-            echo $COMPILATION_RESPONSE
+          if [ -z "$COMPILATION_RESULT" ]; then
+            echo "❌ 編譯失敗！"
             exit 1
           fi
+          echo "✅ 編譯成功！Compilation ID: $COMPILATION_RESULT"
           
-          echo "✅ 編譯成功！Compilation Result ID: $COMPILATION_RESULT"
+          echo "3. 動態組合異動檔案的 Target 清單..."
+          TARGETS_JSON="[]"
           
-          echo "3. 呼叫 API：建立 Workflow Invocation (開始將 SQL 送進 BigQuery 執行)..."
+          # 讀取剛剛偵測到的異動檔案列表
+          for FILE in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            # 擷取檔名，例如從 "definitions/test.sqlx" 取出 "test"
+            TABLE_NAME=$(basename "$FILE" .sqlx)
+            echo "👉 偵測到異動表: $TABLE_NAME"
+            
+            # 將這個表轉成 API 需要的 JSON 格式
+            TARGET_JSON=$(jq -n \
+              --arg db "${{ env.PROJECT_ID }}" \
+              --arg schema "${{ env.TARGET_DATASET }}" \
+              --arg name "$TABLE_NAME" \
+              '{database: $db, schema: $schema, name: $name}')
+            
+            # 塞進 Array 裡
+            TARGETS_JSON=$(echo "$TARGETS_JSON" | jq ". += [$TARGET_JSON]")
+          done
           
+          echo "🔍 生成的執行目標："
+          echo "$TARGETS_JSON"
+
+          echo "4. 呼叫 API：建立 Workflow Invocation (只執行異動檔案)..."
+          
+          # 將 Targets 塞入 Payload 中
+          # transitiveDependenciesIncluded: true 代表如果異動了 A 表，依賴 A 的下游表也會跟著重跑以確保資料一致性
           PAYLOAD=$(jq -n \
             --arg comp "$COMPILATION_RESULT" \
             --arg sa "${{ env.SERVICE_ACCOUNT_EMAIL }}" \
-            '{compilationResult: $comp, invocationConfig: {serviceAccount: $sa}}')
+            --argjson targets "$TARGETS_JSON" \
+            '{
+              compilationResult: $comp,
+              invocationConfig: {
+                serviceAccount: $sa,
+                includedTargets: $targets,
+                transitiveDependenciesIncluded: true
+              }
+            }')
 
           INVOCATION_RESPONSE=$(curl -s -X POST "https://dataform.googleapis.com/v1/projects/${{ env.PROJECT_ID }}/locations/${{ env.LOCATION }}/repositories/${{ env.REPOSITORY }}/workflowInvocations" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
           
-          INVOCATION_ID=$(echo $INVOCATION_RESPONSE | jq -r '.name')
+          INVOCATION_ID=$(echo $INVOCATION_RESPONSE | jq -r '.name // empty')
           
-          if [ "$INVOCATION_ID" == "null" ] || [ -z "$INVOCATION_ID" ]; then
-            echo "❌ 執行觸發失敗！API 回傳內容："
-            echo $INVOCATION_RESPONSE
+          if [ -z "$INVOCATION_ID" ]; then
+            echo "❌ 執行觸發失敗！"
+            echo "$INVOCATION_RESPONSE"
             exit 1
           fi
-          
-          echo "Dataform 執行已成功觸發！Invocation ID: $INVOCATION_ID"
+          echo "🚀 只執行異動檔案成功觸發！Invocation ID: $INVOCATION_ID"
